@@ -45,8 +45,8 @@ epsilon_decay = 0.995
 
 # Initialize the environment
 
-def pipeline(establishment_data, route_data):
-    env = RoutePlanningEnv(data_file=establishment_data, route_file=route_data, time_limit=600, money_limit=800, 
+def pipeline(establishment_data, route_data, time_limit = 600, money_limit = 800):
+    env = RoutePlanningEnv(data_file=establishment_data, route_file=route_data, time_limit=time_limit, money_limit=money_limit, 
                         epsilon_start=epsilon_start, epsilon_end=epsilon_end, epsilon_decay=epsilon_decay)
 
     q_table = np.zeros((env.observation_space.shape[0], env.action_space.n))
@@ -99,9 +99,11 @@ def pipeline(establishment_data, route_data):
         observation, _ = env.reset()  # Reset environment and get initial observation
         done = False
         total_reward = 0
+        steps = 0
+        max_steps = 0
         visited = []
         results = []
-        while not done:
+        while not done and steps < max_steps:
             # Get the action using exploitation (best known action from Q-table)
             observation_idx = np.argmax(observation)  
             action = exploit_action(observation)
@@ -129,8 +131,13 @@ def pipeline(establishment_data, route_data):
                     print("Terminated due to time/money limit or reaching destination.")
                 if truncated:
                     print("Truncated episode due to environment constraints.")
-        result_json = json.dumps(results, indent = 4)
-        return result_json
+            steps += 1
+        
+        if steps > max_steps:
+            return json.dumps([{'latitude': route_lat, 'longitude': route_lng, 'type': 'route'} for route_lat, route_lng in env.route_points], indent = 4)
+        else:
+            result_json = json.dumps(results, indent = 4)
+            return result_json
 
     # Train the model
     train_model()
