@@ -3,7 +3,7 @@ import gymnasium as gym
 from agent import RoutePlanningEnv
 import folium
 from folium.plugins import MarkerCluster
-
+import json
 
 def plot_map(route_points, establishments, places_visited):
     # Create a map centered around the first point in the route
@@ -44,62 +44,63 @@ epsilon_end = 0.01
 epsilon_decay = 0.995
 
 # Initialize the environment
-env = RoutePlanningEnv(data_file="establishments_data.json", route_file="route_points.json", time_limit=600, money_limit=800, 
-                       epsilon_start=epsilon_start, epsilon_end=epsilon_end, epsilon_decay=epsilon_decay)
 
-# Q-table initialization: state-action pair Q-values (use observation space dimensions)
-q_table = np.zeros((env.observation_space.shape[0], env.action_space.n))
+def pipeline(establishment_data, route_data):
+    env = RoutePlanningEnv(data_file=establishment_data, route_file=route_data, time_limit=600, money_limit=800, 
+                        epsilon_start=epsilon_start, epsilon_end=epsilon_end, epsilon_decay=epsilon_decay)
 
-# Function to get the best action (exploit) based on the trained Q-table
-def exploit_action(observation):
-    observation_idx = np.argmax(observation)  # Simplification; handle continuous space better if needed
-    return np.argmax(q_table[observation_idx])
+    q_table = np.zeros((env.observation_space.shape[0], env.action_space.n))
 
-# Training Loop
-def train_model():
-    for episode in range(num_episodes):
-        observation, _ = env.reset()  # Reset environment and get initial observation
-        done = False
-        total_reward = 0
 
-        while not done:
-            observation_idx = np.argmax(observation)  # Simplified; change if observation space needs more discretization
-            # Epsilon-greedy action selection
-            action = env.epsilon_greedy_action(q_table[observation_idx])
+    # Function to get the best action (exploit) based on the trained Q-table
+    def exploit_action(observation):
+        observation_idx = np.argmax(observation)  # Simplification; handle continuous space better if needed
+        return np.argmax(q_table[observation_idx])
 
-            # Take action and observe results
-            next_observation, reward, terminated, truncated, info = env.step(action)
-            next_observation_idx = np.argmax(next_observation)
+    # Training Loop
+    def train_model():
 
-            # Q-learning update rule
-            best_next_action = np.argmax(q_table[next_observation_idx])
-            q_table[observation_idx][action] += learning_rate * (reward + discount_factor * q_table[next_observation_idx][best_next_action] - q_table[observation_idx][action])
+        for episode in range(num_episodes):
+            observation, _ = env.reset()  # Reset environment and get initial observation
+            done = False
+            total_reward = 0
 
-            observation = next_observation  # Move to next state
-            total_reward += reward
+            while not done:
+                observation_idx = np.argmax(observation)  # Simplified; change if observation space needs more discretization
+                # Epsilon-greedy action selection
+                action = env.epsilon_greedy_action(q_table[observation_idx])
 
-            # Check if the episode has terminated
-            if terminated or truncated:
-                done = True
+                # Take action and observe results
+                next_observation, reward, terminated, truncated, info = env.step(action)
+                next_observation_idx = np.argmax(next_observation)
 
-        # Decay epsilon after each episode
-        env.decay_epsilon()
+                # Q-learning update rule
+                best_next_action = np.argmax(q_table[next_observation_idx])
+                q_table[observation_idx][action] += learning_rate * (reward + discount_factor * q_table[next_observation_idx][best_next_action] - q_table[observation_idx][action])
 
-        # Log progress
-        if episode % 100 == 0:
-            print(f"Episode {episode}: Total Reward: {total_reward}, Epsilon: {env.epsilon}")
+                observation = next_observation  # Move to next state
+                total_reward += reward
 
-    print("Training complete.")
+                # Check if the episode has terminated
+                if terminated or truncated:
+                    done = True
 
-# Evaluation loop
-def evaluate_model():
-    for episode in range(num_eval_episodes):
+            # Decay epsilon after each episode
+            env.decay_epsilon()
+
+            # Log progress
+            if episode % 100 == 0:
+                print(f"Episode {episode}: Total Reward: {total_reward}, Epsilon: {env.epsilon}")
+
+        print("Training complete.")
+
+    # Evaluation loop
+    def evaluate_model():
         observation, _ = env.reset()  # Reset environment and get initial observation
         done = False
         total_reward = 0
         visited = []
-        print(f"\n--- Episode {episode+1} ---")
-        
+        results = []
         while not done:
             # Get the action using exploitation (best known action from Q-table)
             observation_idx = np.argmax(observation)  
@@ -108,10 +109,15 @@ def evaluate_model():
             # Take the action and get the result
             next_observation, reward, terminated, truncated, info = env.step(action)
 
-            if action != env.num_establishments:  # If visiting an establishment
+            if action == env.num_establishments:
+                route_lat, route_lng = env.route_points[env.current_index]
+                results.append({'latitude': route_lat, 'longitude': route_lng, 'type': 'route'})
+            else:
+                establishment = env.establishments[action]
+                est_lat, est_lng = establishment['location']
                 visited.append(action)
+                results.append({'latitude': est_lat, 'longitude': est_lng, 'type': 'establishment', 'name': establishment['name']})
 
-            print(visited)
             observation = next_observation  # Move to next observation
             total_reward += reward
 
@@ -123,10 +129,11 @@ def evaluate_model():
                     print("Terminated due to time/money limit or reaching destination.")
                 if truncated:
                     print("Truncated episode due to environment constraints.")
-    plot_map(env.route_points, env.establishments, env.places_visited)
+        result_json = json.dumps(results, indent = 4)
+        return result_json
 
-# Train the model
-train_model()
+    # Train the model
+    train_model()
 
-# Evaluate the model
-evaluate_model()
+    # Evaluate the model
+    return evaluate_model()

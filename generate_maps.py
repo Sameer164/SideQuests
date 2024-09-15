@@ -12,30 +12,35 @@ if not API_KEY:
 
 gmaps = googlemaps.Client(key=API_KEY)
 
-# Define origin and destination
-origin = "1600 Amphitheatre Parkway, Mountain View, CA"
-destination = "1001 R St, Sacramento, CA"
+# Define constants
+# ACTIVITY_TYPES = ['indian_restaurant', 'museum', 'swimming_pool', 'hiking_area', 'night_club', 'restaurant']
+PRICE_ESTIMATES = {0: 5.0, 1: 15.0, 2: 30.0, 3: 60.0, 4: 100.0}
 
-# Get directions
-directions_result = gmaps.directions(origin,
-                                     destination,
-                                     mode="driving",
-                                     departure_time="now")
 
-if directions_result:
-    overview_polyline = directions_result[0]['overview_polyline']['points']
-    route_points = polyline.decode(overview_polyline)
-else:
-    print("No directions found between the specified locations.")
-    exit()
+def get_directions(origin, destination, mode="driving"):
+    """
+    Fetches directions between the origin and destination using Google Maps API.
+    """
+    directions_result = gmaps.directions(origin, destination, mode=mode, departure_time="now")
+    
+    if directions_result:
+        return directions_result[0]['overview_polyline']['points']
+    else:
+        print("No directions found between the specified locations.")
+        return None
 
-# Save the route points to a JSON file
-with open('route_points.json', 'w') as f:
-    json.dump(route_points, f)
 
+def decode_route(overview_polyline):
+    """
+    Decodes the polyline into route points.
+    """
+    return polyline.decode(overview_polyline)
 
 
 def sample_route_points(route_points, sample_distance_meters=5000):
+    """
+    Samples points along the route based on the specified sample distance in meters.
+    """
     sampled_points = []
     total_distance = 0
     last_point = None
@@ -57,67 +62,93 @@ def sample_route_points(route_points, sample_distance_meters=5000):
 
     return sampled_points
 
-sampled_points = sample_route_points(route_points, sample_distance_meters=5000)
 
-establishments = []
-unique_place_ids = set()
+def find_establishments_near_points(sampled_points, activity_types, radius=500, max_places_per_point=3):
+    """
+    Finds establishments around each sampled point based on activity types.
+    """
+    establishments = []
+    unique_place_ids = set()
 
-# Define activity types
-activity_types = ['indian_restaurant', 'museum', 'swimming_pool', 'hiking_area', 'night_club', 'restaurant']
+    for idx, point in enumerate(sampled_points):
+        lat, lng = point
 
-# Price estimates in dollars for each price_level and activity_type
-price_estimates = {
-        0: 5.0,
-        1: 15.0,
-        2: 30.0,
-        3: 60.0,
-        4: 100.0
-}
+        for activity in activity_types:
+            try:
+                places_result = gmaps.places_nearby(location=(lat, lng),
+                                                    radius=radius,
+                                                    type=activity)
+                count = 0
+                for place in places_result.get('results', []):
+                    
+                    place_id = place['place_id']
+                    if place_id not in unique_place_ids:
+                        count += 1
+                        price_level = place.get('price_level', 2)
+                        estimated_price = PRICE_ESTIMATES.get(price_level, 25.0)
+                        establishment = {
+                            'place_id': place_id,
+                            'name': place.get('name'),
+                            'location': (place['geometry']['location']['lat'], place['geometry']['location']['lng']),
+                            'activity_type': activity,
+                            'rating': place.get('rating', 0.0),
+                            'user_ratings_total': place.get('user_ratings_total', 0),
+                            'price_level': price_level,
+                            'estimated_price': estimated_price,
+                            'vicinity': place.get('vicinity')
+                        }
+                        establishments.append(establishment)
+                        unique_place_ids.add(place_id)
+                        if count >= max_places_per_point:
+                            break
 
-for idx, point in enumerate(sampled_points):
-    lat, lng = point
+            except googlemaps.exceptions.ApiError as e:
+                print(f"API Error at point {idx} ({lat}, {lng}): {e}")
+                continue
+            except Exception as e:
+                print(f"Unexpected error at point {idx} ({lat}, {lng}): {e}")
+                continue
 
-    for activity in activity_types:
-        try:
-            places_result = gmaps.places_nearby(location=(lat, lng),
-                                                radius=500,
-                                                type=activity)
-            count = 0
-            for place in places_result.get('results', []):
-                
-                place_id = place['place_id']
-                if place_id not in unique_place_ids:
-                    count += 1
-                    price_level = place.get('price_level', 2)
-                    estimated_price = price_estimates.get(price_level, 25.0)
-                    establishment = {
-                        'place_id': place_id,
-                        'name': place.get('name'),
-                        'location': (place['geometry']['location']['lat'], place['geometry']['location']['lng']),
-                        'activity_type': activity,
-                        'rating': place.get('rating', 0.0),
-                        'user_ratings_total': place.get('user_ratings_total', 0),
-                        'price_level': price_level,
-                        'estimated_price': estimated_price,
-                        'vicinity': place.get('vicinity')
-                    }
-                    establishments.append(establishment)
-                    unique_place_ids.add(place_id)
-                    if count > 3:
-                        break
+            # Sleep to respect API rate limits
+            time.sleep(0.1)
 
-        except googlemaps.exceptions.ApiError as e:
-            print(f"API Error at point {idx} ({lat}, {lng}): {e}")
-            continue
-        except Exception as e:
-            print(f"Unexpected error at point {idx} ({lat}, {lng}): {e}")
-            continue
+    return establishments
 
-        # Sleep to respect API rate limits
-        time.sleep(0.1)
 
-print(f"Found {len(establishments)} unique establishments along the route.")
+def save_to_json(data, filename):
+    """
+    Saves data to a JSON file.
+    """
+    with open(filename, 'w') as f:
+        json.dump(data, f)
 
-# Save establishments to a JSON file
-with open('establishments_data.json', 'w') as f:
-    json.dump(establishments, f)
+
+def generate_data(origin, destination, vibes ,sample_distance_meters=5000):
+    """
+    Generate_data function to get directions, decode, sample points, find establishments, and save results.
+    """
+    # Get directions and decode the polyline
+    polyline_points = get_directions(origin, destination)
+    if polyline_points is None:
+        return
+
+    route_points = decode_route(polyline_points)
+    # save_to_json(route_points, 'route_points.json')
+
+    # Sample points along the route
+    sampled_points = sample_route_points(route_points, sample_distance_meters)
+    
+    # Find establishments near the sampled points
+    establishments = find_establishments_near_points(sampled_points, vibes)
+    print(f"Found {len(establishments)} unique establishments along the route.")
+
+    # Save establishments data to JSON
+    # save_to_json(establishments, 'establishments_data.json')
+    return route_points, establishments
+
+
+# if __name__ == "__main__":
+#     origin = "1600 Amphitheatre Parkway, Mountain View, CA"
+#     destination = "1001 R St, Sacramento, CA"
+    
+#     generate_data(origin, destination, sample_distance_meters=5000)

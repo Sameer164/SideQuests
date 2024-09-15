@@ -19,12 +19,10 @@ class RoutePlanningEnv(gym.Env):
         super(RoutePlanningEnv, self).__init__()
 
         # Load establishments data
-        with open(data_file, 'r') as f:
-            self.establishments = json.load(f)
+        self.establishments = data_file
 
         # Load route points
-        with open(route_file, 'r') as f:
-            self.route_points = json.load(f)
+        self.route_points = route_file
 
         self.time_limit = time_limit  # in minutes
         self.money_limit = money_limit  # in dollars
